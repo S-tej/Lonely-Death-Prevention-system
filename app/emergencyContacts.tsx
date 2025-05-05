@@ -12,6 +12,7 @@ import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import LogoutButton from '../components/LogoutButton';
+import EmergencyCallSettings from '../components/EmergencyCallSettings';
 
 type Contact = {
   id: string;
@@ -77,6 +78,9 @@ export default function EmergencyContactsScreen() {
     setShowAddForm(false);
   };
 
+  // Find the first contact's phone for testing
+  const firstContactPhone = contacts.length > 0 ? contacts[0].phone : undefined;
+
   return (
     <>
       <Stack.Screen 
@@ -89,6 +93,12 @@ export default function EmergencyContactsScreen() {
         <Text style={styles.description}>
           Add people who should be notified in case of emergency.
         </Text>
+        
+        {/* Emergency Call Settings */}
+        <EmergencyCallSettings 
+          contactPhone={firstContactPhone} 
+          patientName={userProfile?.displayName}
+        />
         
         {/* Emergency Contacts Section */}
         <View style={styles.sectionContainer}>

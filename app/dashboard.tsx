@@ -18,6 +18,7 @@ import AlertBanner from '../components/AlertBanner';
 import EmergencyButton from '../components/EmergencyButton';
 import AuthGuard from '../components/AuthGuard';
 import LogoutButton from '../components/LogoutButton';
+import ESP32Status from '../components/ESP32Status';
 
 export default function Dashboard() {
   const { user, userProfile } = useContext(AuthContext);
@@ -103,6 +104,9 @@ export default function Dashboard() {
               </Text>
             </View>
           </View>
+          
+          {/* ESP32 Status Indicator */}
+          <ESP32Status />
 
           {activeAlerts.length > 0 && (
             <View style={styles.alertsContainer}>

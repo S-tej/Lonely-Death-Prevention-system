@@ -1,7 +1,9 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
-import { ref, onValue, push, remove, query, orderByChild, limitToLast, get } from 'firebase/database';
+import { ref, onValue, push, remove, query, orderByChild, limitToLast, get, set } from 'firebase/database';
 import { database } from '../firebase/config';
 import { AuthContext } from './AuthContext';
+import { makeEmergencyCall, sendEmergencySMS } from '../utils/twilioService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type Alert = {
   id?: string;
@@ -16,17 +18,21 @@ export type Alert = {
 type AlertsContextType = {
   alerts: Alert[];
   loading: boolean;
-  triggerAlert: (alert: Omit<Alert, 'id' | 'timestamp' | 'acknowledged'>) => Promise<void>;
-  triggerEmergency: (message: string) => Promise<void>;
+  // Fix return types to match implementation:
+  triggerAlert: (alert: Omit<Alert, 'id' | 'timestamp' | 'acknowledged'>) => Promise<Alert | undefined>;
+  triggerEmergency: (message: string) => Promise<Alert | undefined>;
   acknowledgeAlert: (alertId: string) => Promise<void>;
   clearAlert: (alertId: string) => Promise<void>;
+  unacknowledgedCount: number;
+  clearAllAlerts?: () => Promise<void>;
 };
 
 export const AlertsContext = createContext<AlertsContextType>({
   alerts: [],
   loading: true,
-  triggerAlert: async () => {},
-  triggerEmergency: async () => {},
+  unacknowledgedCount: 0,
+  triggerAlert: async () => undefined,
+  triggerEmergency: async () => undefined,
   acknowledgeAlert: async () => {},
   clearAlert: async () => {},
 });
@@ -34,8 +40,25 @@ export const AlertsContext = createContext<AlertsContextType>({
 export const AlertsProvider = ({ children }: { children: ReactNode }) => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useContext(AuthContext);
-
+  const [unacknowledgedCount, setUnacknowledgedCount] = useState(0);
+  const { user, userProfile } = useContext(AuthContext);
+  
+  // Track when the last emergency call was made to prevent frequent calls
+  const [lastEmergencyCallTime, setLastEmergencyCallTime] = useState<Record<string, number>>({});
+  // Track if automatic calls are enabled
+  const [autoCallsEnabled, setAutoCallsEnabled] = useState(true);
+  
+  // Load auto call setting
+  useEffect(() => {
+    const loadSetting = async () => {
+      const setting = await AsyncStorage.getItem('autoCallsEnabled');
+      if (setting !== null) {
+        setAutoCallsEnabled(setting === 'true');
+      }
+    };
+    loadSetting();
+  }, []);
+  
   useEffect(() => {
     if (!user) {
       setLoading(false);
@@ -78,6 +101,7 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
 
   }, [user]);
 
+  // Enhanced triggerAlert with emergency calling
   const triggerAlert = async (alert: Omit<Alert, 'id' | 'timestamp' | 'acknowledged'>) => {
     if (!user) return;
     
@@ -89,27 +113,68 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
     };
     
     try {
+      // Add alert to database
       const alertsRef = ref(database, `alerts/${user.uid}`);
-      await push(alertsRef, newAlert);
-
-      // Send notification to caretakers
-      await push(ref(database, `notifications/caretakers/${user.uid}`), {
-        timestamp: now,
-        patientId: user.uid,
-        alertType: alert.type,
-        message: alert.message,
-        read: false
-      });
+      const newAlertRef = push(alertsRef);
+      await set(newAlertRef, newAlert);
+      
+      // Only make calls for emergency or critical alerts
+      if ((alert.type === 'emergency' || alert.type === 'critical') && autoCallsEnabled) {
+        // Check if we made a call recently (within 15 minutes) to prevent spam
+        const alertKey = `${alert.type}_${alert.vitalSign || 'general'}`;
+        const lastCallTime = lastEmergencyCallTime[alertKey] || 0;
+        const fifteenMinutes = 15 * 60 * 1000;
+        
+        if (now - lastCallTime > fifteenMinutes) {
+          // Get emergency contacts
+          const emergencyContacts = userProfile?.emergencyContacts || [];
+          
+          if (emergencyContacts.length > 0) {
+            for (const contact of emergencyContacts) {
+              if (contact.phoneNumber) {
+                // First send an SMS
+                await sendEmergencySMS({
+                  to: contact.phoneNumber,
+                  message: `ALERT: ${userProfile?.displayName || 'Patient'} - ${alert.message}`,
+                  patientName: userProfile?.displayName
+                });
+                
+                // For emergency level alerts or manually triggered alerts, make a call
+                if (alert.type === 'emergency') {
+                  await makeEmergencyCall({
+                    to: contact.phoneNumber,
+                    message: alert.message,
+                    patientName: userProfile?.displayName
+                  });
+                }
+              }
+            }
+            
+            // Update the last call time
+            setLastEmergencyCallTime(prev => ({
+              ...prev,
+              [alertKey]: now
+            }));
+          }
+        }
+      }
+      
+      return {
+        ...newAlert,
+        id: newAlertRef.key
+      };
     } catch (error) {
       console.error('Failed to trigger alert:', error);
       throw error;
     }
   };
 
+  // Enhanced triggerEmergency function
   const triggerEmergency = async (message: string) => {
-    await triggerAlert({
+    return triggerAlert({
       type: 'emergency',
-      message: message || 'Emergency assistance requested!'
+      message: message || 'Emergency assistance requested!',
+      vitalSign: 'manual'
     });
   };
 
@@ -139,10 +204,12 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
     <AlertsContext.Provider value={{
       alerts,
       loading,
+      unacknowledgedCount,
       triggerAlert,
       triggerEmergency,
       acknowledgeAlert,
-      clearAlert
+      clearAlert,
+      clearAllAlerts: async () => {} // Add this if needed
     }}>
       {children}
     </AlertsContext.Provider>

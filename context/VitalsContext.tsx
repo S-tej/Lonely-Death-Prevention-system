@@ -2,6 +2,8 @@ import React, { createContext, useState, useEffect, useContext, ReactNode } from
 import { ref, onValue, set, push } from 'firebase/database';
 import { database } from '../firebase/config';
 import { AuthContext } from './AuthContext';
+import { AlertsContext } from './AlertsContext';
+import { fetchESP32Data, updateDatabaseWithESP32Data, checkESP32Connection } from '../utils/esp32DataFetcher';
 
 export type VitalSign = {
   timestamp: number;
@@ -13,6 +15,16 @@ export type VitalSign = {
   oxygenSaturation: number; // SpO2
   temperature: number;
   ecgData?: number[]; // ECG readings
+  ecgMetrics?: {
+    HRV_SDNN: number;
+    HRV_RMSSD: number;
+    RR_interval: number;
+    QRS_width: number;
+    PR_interval: number;
+    QT_interval: number;
+    ST_deviation: number;
+    signal_quality: number;
+  };
 };
 
 type AlertThresholds = {
@@ -75,8 +87,13 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
   const [thresholds, setThresholds] = useState<AlertThresholds>(defaultThresholds);
+  const [isESP32Connected, setIsESP32Connected] = useState(false);
   
   const { user } = useContext(AuthContext);
+  const { triggerAlert } = useContext(AlertsContext);
+  
+  // Track when the last abnormality alert was triggered to prevent spam
+  const [lastAbnormalityAlertTime, setLastAbnormalityAlertTime] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!user) {
@@ -154,16 +171,35 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
       ecgPoints.push(baseValue + peak + (Math.random() * 0.1));
     }
     
+    // Generate random heart rate
+    const heartRate = Math.floor(Math.random() * (100 - 60) + 60);
+    
+    // Calculate RR interval from heart rate
+    const rrInterval = Math.floor(60000 / heartRate);
+    
+    // Generate random ECG metrics with realistic ranges
+    const ecgMetrics = {
+      HRV_SDNN: Math.floor(Math.random() * 50) + 20, // 20-70ms
+      HRV_RMSSD: Math.floor(Math.random() * 35) + 15, // 15-50ms
+      RR_interval: rrInterval, // Based on heart rate
+      QRS_width: Math.floor(Math.random() * 50) + 70, // 70-120ms
+      PR_interval: Math.floor(Math.random() * 80) + 120, // 120-200ms
+      QT_interval: Math.floor(Math.random() * 100) + 350, // 350-450ms
+      ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)), // -0.2 to 0.2mV
+      signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2)) // 0.7-1.0
+    };
+    
     const newVital: VitalSign = {
       timestamp: now,
-      heartRate: Math.floor(Math.random() * (100 - 60) + 60),
+      heartRate: heartRate,
       bloodPressure: {
         systolic: Math.floor(Math.random() * (140 - 110) + 110),
         diastolic: Math.floor(Math.random() * (90 - 70) + 70)
       },
       oxygenSaturation: Math.floor(Math.random() * (100 - 94) + 94),
       temperature: parseFloat((Math.random() * (37.2 - 36.5) + 36.5).toFixed(1)),
-      ecgData: ecgPoints
+      ecgData: ecgPoints,
+      ecgMetrics: ecgMetrics
     };
 
     try {
@@ -210,6 +246,138 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
       temperatureLow: vitals.temperature < thresholds.temperatureLow
     };
   };
+
+  // Replace simulated data with ESP32 data
+  useEffect(() => {
+    if (!user) return;
+    
+    let isMounted = true;
+    let fetchInterval: NodeJS.Timeout;
+    let connectionCheckInterval: NodeJS.Timeout;
+    
+    // Function to check ESP32 connection
+    const checkConnection = async () => {
+      const connected = await checkESP32Connection();
+      if (isMounted) {
+        setIsESP32Connected(connected);
+        console.log(`ESP32 connection: ${connected ? 'Online' : 'Offline'}`);
+      }
+    };
+    
+    // Check connection initially
+    checkConnection();
+    
+    // Set up periodic connection checking
+    connectionCheckInterval = setInterval(checkConnection, 30000); // Every 30 seconds
+    
+    // Function to fetch data from ESP32
+    const fetchData = async () => {
+      try {
+        // Skip if not connected
+        if (!isESP32Connected) {
+          console.log('ESP32 not connected, skipping fetch');
+          return;
+        }
+        
+        // Fetch data from ESP32
+        const esp32Data = await fetchESP32Data();
+        
+        // Update database with ESP32 data
+        if (user?.uid) {
+          await updateDatabaseWithESP32Data(user.uid, esp32Data);
+          
+          // Note: We don't need to manually update currentVitals here
+          // since we're subscribing to the database changes in another effect
+          console.log('ESP32 data processed and saved to database');
+        }
+      } catch (error) {
+        console.error('Error fetching ESP32 data:', error);
+      }
+    };
+    
+    // Set up periodic data fetching
+    fetchInterval = setInterval(fetchData, 5000); // Every 5 seconds
+    
+    // Initial data fetch
+    fetchData();
+    
+    // Clean up intervals
+    return () => {
+      isMounted = false;
+      clearInterval(fetchInterval);
+      clearInterval(connectionCheckInterval);
+    };
+  }, [user, isESP32Connected]); // Add isESP32Connected as a dependency
+
+  // Add new useEffect to monitor vitals and trigger alerts for abnormalities
+  useEffect(() => {
+    if (!currentVitals || !user) return;
+    
+    const now = Date.now();
+    const thirtyMinutes = 30 * 60 * 1000; // Time between repeat alerts
+    
+    const checkAndTriggerAlert = async (
+      condition: boolean,
+      type: string,
+      message: string,
+      severity: 'warning' | 'critical' | 'emergency'
+    ) => {
+      if (condition) {
+        const lastAlertTime = lastAbnormalityAlertTime[type] || 0;
+        if (now - lastAlertTime > thirtyMinutes) {
+          await triggerAlert({
+            type: severity,
+            message,
+            vitalSign: type.split('_')[0]
+          });
+          
+          setLastAbnormalityAlertTime(prev => ({
+            ...prev,
+            [type]: now
+          }));
+        }
+      }
+    };
+    
+    // Check heart rate
+    checkAndTriggerAlert(
+      currentVitals.heartRate > thresholds.heartRateHigh + 15,
+      'heartRate_high',
+      `Heart rate critically high: ${currentVitals.heartRate} BPM`,
+      'critical'
+    );
+    
+    checkAndTriggerAlert(
+      currentVitals.heartRate < thresholds.heartRateLow - 10,
+      'heartRate_low',
+      `Heart rate critically low: ${currentVitals.heartRate} BPM`,
+      'critical'
+    );
+    
+    // Check oxygen saturation
+    checkAndTriggerAlert(
+      currentVitals.oxygenSaturation < thresholds.oxygenSaturationLow - 3,
+      'oxygen_low',
+      `Oxygen level dangerously low: ${currentVitals.oxygenSaturation}%`,
+      'emergency'
+    );
+    
+    // Check temperature
+    checkAndTriggerAlert(
+      currentVitals.temperature > thresholds.temperatureHigh + 1,
+      'temperature_high',
+      `Body temperature dangerously high: ${currentVitals.temperature.toFixed(1)}°C`,
+      'critical'
+    );
+    
+    checkAndTriggerAlert(
+      currentVitals.temperature < thresholds.temperatureLow - 0.5,
+      'temperature_low',
+      `Body temperature dangerously low: ${currentVitals.temperature.toFixed(1)}°C`,
+      'critical'
+    );
+    
+  }, [currentVitals, thresholds, user, triggerAlert]);
 
   return (
     <VitalsContext.Provider value={{
