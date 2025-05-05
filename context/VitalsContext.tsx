@@ -3,7 +3,7 @@ import { ref, onValue, set, push } from 'firebase/database';
 import { database } from '../firebase/config';
 import { AuthContext } from './AuthContext';
 import { AlertsContext } from './AlertsContext';
-import { fetchESP32Data, updateDatabaseWithESP32Data, checkESP32Connection } from '../utils/esp32DataFetcher';
+import { fetchESP32Data, updateDatabaseWithESP32Data, checkESP32Connection, isAllZeros } from '../utils/esp32DataFetcher';
 
 export type VitalSign = {
   timestamp: number;
@@ -24,6 +24,12 @@ export type VitalSign = {
     QT_interval: number;
     ST_deviation: number;
     signal_quality: number;
+  };
+  deviceId?: string; // Add deviceId property
+  mlAnalysis?: {    // Add mlAnalysis property
+    prediction: string;
+    confidence: number;
+    timestamp: number;
   };
 };
 
@@ -287,10 +293,10 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
         const esp32Data = await fetchESP32Data();
         
         // Don't update if all values are zero - might be a connection issue
-        // if (isAllZeros(esp32Data)) {
-        //   console.log('Received all zeros from ESP32, likely a connection issue');
-        //   return;
-        // }
+        if (isAllZeros(esp32Data)) {
+          console.log('Received all zeros from ESP32, likely a connection issue');
+          return;
+        }
         
         // Update database with ESP32 data
         if (user?.uid) {
@@ -383,6 +389,38 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
       `Body temperature dangerously low: ${currentVitals.temperature.toFixed(1)}°C`,
       'critical'
     );
+    
+  }, [currentVitals, thresholds, user, triggerAlert]);
+
+  // Add new useEffect to monitor vitals and ML predictions for abnormalities
+  useEffect(() => {
+    if (!currentVitals || !user) return;
+    
+    // Handle ML prediction-based alerts
+    if (currentVitals.mlAnalysis && 
+        currentVitals.mlAnalysis.prediction !== 'Normal' && 
+        currentVitals.mlAnalysis.confidence > 75) {
+      
+      const now = Date.now();
+      const sixHours = 6 * 60 * 60 * 1000; // Only alert once every 6 hours for ML predictions
+      const alertKey = `ml_${currentVitals.mlAnalysis.prediction}`;
+      const lastAlertTime = lastAbnormalityAlertTime[alertKey] || 0;
+      
+      // Only trigger if we haven't recently alerted for this condition
+      if (now - lastAlertTime > sixHours) {
+        triggerAlert({
+          type: 'critical',
+          message: `AI detected ${currentVitals.mlAnalysis.prediction} (${currentVitals.mlAnalysis.confidence}% confidence)`,
+          vitalSign: 'ecg',
+          // deviceId: currentVitals.deviceId
+        });
+        
+        setLastAbnormalityAlertTime(prev => ({
+          ...prev,
+          [alertKey]: now
+        }));
+      }
+    }
     
   }, [currentVitals, thresholds, user, triggerAlert]);
 

@@ -1,6 +1,7 @@
 import { ref, set, push } from 'firebase/database';
 import { getDatabase } from 'firebase/database';
 import { database } from '../firebase/config';
+import { mapESP32DataToMLParams, getPrediction } from './mlPredictionService';
 
 const ESP_IP = 'http://192.168.18.99';  // Your ESP32 IP address
 
@@ -8,7 +9,7 @@ const ESP_IP = 'http://192.168.18.99';  // Your ESP32 IP address
 export interface ESP32Data {
   SpO2: number;             // Oxygen saturation
   bodytempc: number;        // Body temperature in Celsius
-  currentrr: number;        // Current respiratory rate
+  rrinterval: number;        // Current respiratory rate
   deviceId: string;         // Device identifier
   diastolic: number;        // Diastolic blood pressure
   heartrate: number;        // Heart rate
@@ -60,6 +61,21 @@ export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Dat
     
     const now = Date.now();
     
+    // Get ML prediction if we have necessary data
+    let mlPrediction = null;
+    try {
+      if (hasValidEcgParameters(data)) {
+        const mlParams = mapESP32DataToMLParams(data);
+        mlPrediction = await getPrediction(mlParams);
+        console.log('ML prediction for ECG data:', mlPrediction);
+      } else {
+        console.log('Skipping ML prediction: Missing required ECG parameters');
+      }
+    } catch (error) {
+      console.error('Failed to get ML prediction:', error);
+      // Continue even if ML prediction fails
+    }
+    
     // Create vitals object from ESP32 data - matching exact fields
     const vitals = {
       timestamp: now,
@@ -73,14 +89,20 @@ export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Dat
       ecgMetrics: {
         HRV_SDNN: data.hrvsdn || 0,
         HRV_RMSSD: data.hrvrmssd || 0,
-        RR_interval: data.currentrr || 0,
+        RR_interval: data.rrinterval || 0,
         QRS_width: data.qrswidth || 0,
         PR_interval: data.printerval || 0,
         QT_interval: data.qtinterval || 0,
         ST_deviation: data.stdeviation || 0,
         signal_quality: data.signalquality || 0
       },
-      deviceId: data.deviceId
+      deviceId: data.deviceId,
+      // Add ML prediction results if available
+      mlAnalysis: mlPrediction ? {
+        prediction: mlPrediction.prediction,
+        confidence: mlPrediction.confidence,
+        timestamp: now
+      } : null
     };
 
     // Update current vitals
@@ -127,15 +149,28 @@ export const checkESP32Connection = async (): Promise<boolean> => {
  * Check if all numerical values in the data are zero
  * This helps identify potential connection issues
  */
-const isAllZeros = (data: ESP32Data): boolean => {
+export const isAllZeros = (data: ESP32Data): boolean => {
   if (!data) return true;
   
   const numericFields = [
-    data.SpO2, data.bodytempc, data.currentrr, data.diastolic,
+    data.SpO2, data.bodytempc, data.rrinterval, data.diastolic,
     data.heartrate, data.hrvrmssd, data.hrvsdn, data.ppgheartrate,
     data.printerval, data.qrswidth, data.qtinterval, 
     data.signalquality, data.stdeviation, data.systolic
   ];
   
   return numericFields.every(val => val === 0 || val === null || val === undefined);
+};
+
+/**
+ * Check if ESP32 data has valid ECG parameters for ML prediction
+ */
+const hasValidEcgParameters = (data: ESP32Data): boolean => {
+  return (
+    typeof data.rrinterval === 'number' && data.rrinterval > 0 &&
+    typeof data.qrswidth === 'number' && data.qrswidth > 0 &&
+    typeof data.printerval === 'number' && data.printerval > 0 &&
+    typeof data.stdeviation === 'number' &&
+    typeof data.qtinterval === 'number' && data.qtinterval > 0
+  );
 };

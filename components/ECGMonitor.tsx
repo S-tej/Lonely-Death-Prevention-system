@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { View, Text, StyleSheet, Dimensions, ActivityIndicator, ScrollView } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { subscribeToData } from '../utils/realtimeDbUtils';
 import { getLatestECGData } from '../utils/deviceUtils';
 import { Ionicons } from '@expo/vector-icons';
+import { get, onValue, ref } from 'firebase/database';
+import { database } from '../firebase/config';
+import { AuthContext } from '../context/AuthContext';
 
 interface ECGMonitorProps {
-  deviceId: string;
+  // Remove deviceId prop since we're getting data directly from the user
   sampleCount?: number;
 }
 
@@ -37,40 +40,61 @@ interface ECGData {
   };
 }
 
-const ECGMonitor: React.FC<ECGMonitorProps> = ({ deviceId, sampleCount = 100 }) => {
+const ECGMonitor: React.FC<ECGMonitorProps> = ({ sampleCount = 100 }) => {
   const [ecgData, setEcgData] = useState<number[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [heartRate, setHeartRate] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<ECGMetrics | null>(null);
+  const [mlPrediction, setMlPrediction] = useState<{prediction: string, confidence: number} | null>(null);
+  
+  // Get the current user from AuthContext
+  const { user } = useContext(AuthContext);
 
   useEffect(() => {
-    // Load initial data
+    if (!user) return;
+    
+    // Load initial data directly from user's vitals
     const loadData = async () => {
       try {
         setLoading(true);
-        const data = await getLatestECGData(deviceId);
-        if (data && data.data) {
-          // Extract ECG values
-          const values = data.data.map((item: any) => item.value);
-          setEcgData(values.slice(-sampleCount));
-          setLastUpdated(new Date(data.metadata.uploadTime));
+        // Read directly from the user's vitals
+        const userVitalsRef = ref(database, `vitals/${user.uid}/current`);
+        const snapshot = await get(userVitalsRef);
+        
+        if (snapshot.exists()) {
+          const vitalsData = snapshot.val();
           
-          // Set heart rate
-          if (data.metadata.heartRate) {
-            setHeartRate(data.metadata.heartRate);
-          } else if (values.length > 0 && data.metadata.samplingRate) {
-            const estimatedHR = estimateHeartRate(values, data.metadata.samplingRate);
-            if (estimatedHR) setHeartRate(estimatedHR);
+          // Set ECG data if available
+          if (vitalsData.ecgData) {
+            setEcgData(vitalsData.ecgData.slice(-sampleCount));
           }
           
-          // Set ECG metrics if available
-          if (data.metadata.ecgMetrics) {
-            setMetrics(data.metadata.ecgMetrics);
+          // Set last updated time
+          if (vitalsData.timestamp) {
+            setLastUpdated(new Date(vitalsData.timestamp));
+          }
+          
+          // Set heart rate
+          if (vitalsData.heartRate) {
+            setHeartRate(vitalsData.heartRate);
+          }
+          
+          // Set ECG metrics
+          if (vitalsData.ecgMetrics) {
+            setMetrics(vitalsData.ecgMetrics);
+          }
+          
+          // Set ML prediction if available
+          if (vitalsData.mlAnalysis) {
+            setMlPrediction({
+              prediction: vitalsData.mlAnalysis.prediction,
+              confidence: vitalsData.mlAnalysis.confidence
+            });
           }
         }
       } catch (error) {
-        console.error('Error loading ECG data:', error);
+        console.error('Error loading vital data:', error);
       } finally {
         setLoading(false);
       }
@@ -78,37 +102,46 @@ const ECGMonitor: React.FC<ECGMonitorProps> = ({ deviceId, sampleCount = 100 }) 
     
     loadData();
     
-    // Subscribe to real-time updates
-    const unsubscribe = subscribeToData(`ecg_data/${deviceId}`, (data: any) => {
-      if (data) {
-        // Find the latest upload
-        const timestamps = Object.keys(data).sort((a, b) => parseInt(b) - parseInt(a));
-        if (timestamps.length > 0) {
-          const latestData = data[timestamps[0]];
-          if (latestData && latestData.data) {
-            const values = latestData.data.map((item: any) => item.value);
-            setEcgData(values.slice(-sampleCount));
-            setLastUpdated(new Date(latestData.metadata.uploadTime));
-            
-            // Set heart rate from metadata if available
-            if (latestData.metadata.heartRate) {
-              setHeartRate(latestData.metadata.heartRate);
-            } else if (values.length > 0 && latestData.metadata.samplingRate) {
-              const estimatedHR = estimateHeartRate(values, latestData.metadata.samplingRate);
-              if (estimatedHR) setHeartRate(estimatedHR);
-            }
-            
-            // Set ECG metrics if available
-            if (latestData.metadata.ecgMetrics) {
-              setMetrics(latestData.metadata.ecgMetrics);
-            }
-          }
+    // Subscribe to real-time updates from user's vitals
+    const vitalsRef = ref(database, `vitals/${user.uid}/current`);
+    const vitalsUnsubscribe = onValue(vitalsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const vitalsData = snapshot.val();
+        
+        // Update ECG data if available
+        if (vitalsData.ecgData) {
+          setEcgData(vitalsData.ecgData.slice(-sampleCount));
+        }
+        
+        // Update last updated time
+        if (vitalsData.timestamp) {
+          setLastUpdated(new Date(vitalsData.timestamp));
+        }
+        
+        // Update heart rate
+        if (vitalsData.heartRate) {
+          setHeartRate(vitalsData.heartRate);
+        }
+        
+        // Update ECG metrics
+        if (vitalsData.ecgMetrics) {
+          setMetrics(vitalsData.ecgMetrics);
+        }
+        
+        // Update ML prediction if available
+        if (vitalsData.mlAnalysis) {
+          setMlPrediction({
+            prediction: vitalsData.mlAnalysis.prediction,
+            confidence: vitalsData.mlAnalysis.confidence
+          });
         }
       }
     });
     
-    return () => unsubscribe();
-  }, [deviceId]);
+    return () => {
+      vitalsUnsubscribe();
+    };
+  }, [user, sampleCount]);
 
   // Very simplified heart rate estimation (fallback if not provided in data)
   const estimateHeartRate = (ecgValues: number[], samplingRate: number): number | null => {
@@ -182,6 +215,21 @@ const ECGMonitor: React.FC<ECGMonitorProps> = ({ deviceId, sampleCount = 100 }) 
           </View>
         )}
       </View>
+      
+      {/* Add ML Prediction display */}
+      {mlPrediction && (
+        <View style={styles.mlPredictionContainer}>
+          <Text style={styles.mlPredictionTitle}>AI Analysis:</Text>
+          <View style={styles.mlPredictionContent}>
+            <Text style={styles.mlPredictionResult}>
+              {mlPrediction.prediction}
+            </Text>
+            <Text style={styles.mlPredictionConfidence}>
+              Confidence: {mlPrediction.confidence}%
+            </Text>
+          </View>
+        </View>
+      )}
       
       {lastUpdated && (
         <Text style={styles.lastUpdated}>
@@ -426,7 +474,35 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#888',
     marginTop: 2,
-  }
+  },
+  mlPredictionContainer: {
+    backgroundColor: '#f8f8f8',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  mlPredictionTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  mlPredictionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  mlPredictionResult: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#5C6BC0',
+  },
+  mlPredictionConfidence: {
+    fontSize: 12,
+    color: '#666',
+  },
 });
 
 export default ECGMonitor;

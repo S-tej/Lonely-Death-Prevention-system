@@ -19,6 +19,7 @@ import EmergencyButton from '../components/EmergencyButton';
 import AuthGuard from '../components/AuthGuard';
 import LogoutButton from '../components/LogoutButton';
 import ESP32Status from '../components/ESP32Status';
+import ECGMonitor from '../components/ECGMonitor';
 
 export default function Dashboard() {
   const { user, userProfile } = useContext(AuthContext);
@@ -199,6 +200,15 @@ export default function Dashboard() {
               <Text style={styles.actionButtonText}>Settings</Text>
             </TouchableOpacity>
           </View>
+
+          <View style={styles.chartsContainer}>
+            <Text style={styles.sectionTitle}>Real-time Monitoring</Text>
+            
+            {/* Use ECGMonitor without deviceId prop */}
+            <ECGMonitor />
+            
+            {/* ... rest of your existing code ... */}
+          </View>
         </ScrollView>
       </>
     </AuthGuard>
@@ -272,5 +282,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontWeight: '600',
     color: '#333',
+  },
+  chartsContainer: {
+    marginTop: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
   },
 });
