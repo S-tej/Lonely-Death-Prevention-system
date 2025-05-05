@@ -1,21 +1,20 @@
 import { ref, set, push } from 'firebase/database';
 import { getDatabase } from 'firebase/database';
-import app from '../firebase/config';
+import { database } from '../firebase/config';
 
-const database = getDatabase(app);
-const ESP_IP = 'http://192.168.18.99';
+const ESP_IP = 'http://192.168.18.99';  // Your ESP32 IP address
 
 // Interface for the data received from ESP32
 export interface ESP32Data {
-  deviceId: string;         // Device identifier
   SpO2: number;             // Oxygen saturation
-  bodytempc: number;        // Body temperature in Celsius  
+  bodytempc: number;        // Body temperature in Celsius
+  currentrr: number;        // Current respiratory rate
+  deviceId: string;         // Device identifier
   diastolic: number;        // Diastolic blood pressure
   heartrate: number;        // Heart rate
   hrvrmssd: number;         // HRV RMSSD
   hrvsdn: number;           // HRV SDN (SDNN)
   ppgheartrate: number;     // PPG heart rate
-  rrinterval: number;
   printerval: number;       // PR interval (ECG)
   qrswidth: number;         // QRS width (ECG)
   qtinterval: number;       // QT interval (ECG)
@@ -30,6 +29,7 @@ export interface ESP32Data {
  */
 export const fetchESP32Data = async (): Promise<ESP32Data> => {
   try {
+    console.log('Fetching data from ESP32...');
     const response = await fetch(`${ESP_IP}`);
     
     if (!response.ok) {
@@ -50,20 +50,20 @@ export const fetchESP32Data = async (): Promise<ESP32Data> => {
  * @param userId The user ID for database storage
  * @param data The ESP32 data
  */
-export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Data) => {
+export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Data): Promise<boolean> => {
   try {
-    // Skip update if we received all zeros (likely a connection issue)
-    if (isAllZeros(data)) {
-      console.log('Skipping update: All values are zero');
-      return;
+    // Skip update if we received all zeros or null data (likely a connection issue)
+    if (!data || isAllZeros(data)) {
+      console.log('Skipping update: All values are zero or data is null');
+      return false;
     }
     
     const now = Date.now();
     
-    // Create vitals object from ESP32 data
+    // Create vitals object from ESP32 data - matching exact fields
     const vitals = {
       timestamp: now,
-      heartRate: data.heartrate || data.ppgheartrate || 0, // Use ppg as fallback
+      heartRate: data.heartrate || (data.ppgheartrate > 0 ? data.ppgheartrate : 0),
       bloodPressure: {
         systolic: data.systolic || 0,
         diastolic: data.diastolic || 0
@@ -73,13 +73,14 @@ export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Dat
       ecgMetrics: {
         HRV_SDNN: data.hrvsdn || 0,
         HRV_RMSSD: data.hrvrmssd || 0,
-        RR_interval: data.rrinterval || 0,
+        RR_interval: data.currentrr || 0,
         QRS_width: data.qrswidth || 0,
         PR_interval: data.printerval || 0,
         QT_interval: data.qtinterval || 0,
         ST_deviation: data.stdeviation || 0,
         signal_quality: data.signalquality || 0
-      }
+      },
+      deviceId: data.deviceId
     };
 
     // Update current vitals
@@ -89,11 +90,14 @@ export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Dat
     const historicalRef = ref(database, `vitals/${userId}/history/${now}`);
     await set(historicalRef, vitals);
     
+    // Store raw ESP32 data for debugging/reference
+    await set(ref(database, `vitals/${userId}/raw_esp32_data/${now}`), data);
+    
     console.log('Database updated with ESP32 data for user:', userId);
-    return;
+    return true;
   } catch (error) {
     console.error('Error updating database with ESP32 data:', error);
-    throw error;
+    return false;
   }
 };
 
@@ -124,12 +128,14 @@ export const checkESP32Connection = async (): Promise<boolean> => {
  * This helps identify potential connection issues
  */
 const isAllZeros = (data: ESP32Data): boolean => {
+  if (!data) return true;
+  
   const numericFields = [
-    data.SpO2, data.bodytempc, data.rrinterval, data.diastolic,
+    data.SpO2, data.bodytempc, data.currentrr, data.diastolic,
     data.heartrate, data.hrvrmssd, data.hrvsdn, data.ppgheartrate,
     data.printerval, data.qrswidth, data.qtinterval, 
     data.signalquality, data.stdeviation, data.systolic
   ];
   
-  return numericFields.every(val => val === 0);
+  return numericFields.every(val => val === 0 || val === null || val === undefined);
 };

@@ -157,13 +157,20 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // Function to generate simulated vital sign readings (for demo/testing)
-  const simulateReading = async () => {
-    if (!user) return;
+  const simulateReading = async (): Promise<VitalSign | null> => {
+    if (isESP32Connected) {
+      console.log('ESP32 connected, not simulating data');
+      return null; // Don't simulate data when ESP32 is connected
+    }
+    
+    // Original simulation code for when ESP32 is not connected
+    if (!user) return null;
+    console.log('Simulating vitals reading for demo purposes');
     
     const now = Date.now();
     
-    // Generate random ECG-like waveform data (simplified)
-    const ecgPoints: number[] = [];
+    // Generate ECG waveform data
+    const ecgPoints = [];
     for (let i = 0; i < 50; i++) {
       // Simplified ECG pattern generation
       const baseValue = 0.8;
@@ -171,20 +178,17 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
       ecgPoints.push(baseValue + peak + (Math.random() * 0.1));
     }
     
-    // Generate random heart rate
-    const heartRate = Math.floor(Math.random() * (100 - 60) + 60);
+    // Generate random heart rate in normal range
+    const heartRate = Math.floor(Math.random() * (90 - 60) + 60);
     
-    // Calculate RR interval from heart rate
-    const rrInterval = Math.floor(60000 / heartRate);
-    
-    // Generate random ECG metrics with realistic ranges
+    // Generate ECG metrics (simplified)
     const ecgMetrics = {
-      HRV_SDNN: Math.floor(Math.random() * 50) + 20, // 20-70ms
-      HRV_RMSSD: Math.floor(Math.random() * 35) + 15, // 15-50ms
-      RR_interval: rrInterval, // Based on heart rate
-      QRS_width: Math.floor(Math.random() * 50) + 70, // 70-120ms
-      PR_interval: Math.floor(Math.random() * 80) + 120, // 120-200ms
-      QT_interval: Math.floor(Math.random() * 100) + 350, // 350-450ms
+      HRV_SDNN: parseFloat((Math.random() * 40 + 20).toFixed(2)), // 20-60ms
+      HRV_RMSSD: parseFloat((Math.random() * 30 + 15).toFixed(2)), // 15-45ms
+      RR_interval: Math.floor(60000 / heartRate), // Convert BPM to RR interval in ms
+      QRS_width: Math.floor(Math.random() * 20 + 80), // 80-100ms
+      PR_interval: Math.floor(Math.random() * 40 + 120), // 120-160ms
+      QT_interval: Math.floor(Math.random() * 50 + 350), // 350-400ms
       ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)), // -0.2 to 0.2mV
       signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2)) // 0.7-1.0
     };
@@ -282,12 +286,15 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
         // Fetch data from ESP32
         const esp32Data = await fetchESP32Data();
         
+        // Don't update if all values are zero - might be a connection issue
+        // if (isAllZeros(esp32Data)) {
+        //   console.log('Received all zeros from ESP32, likely a connection issue');
+        //   return;
+        // }
+        
         // Update database with ESP32 data
         if (user?.uid) {
           await updateDatabaseWithESP32Data(user.uid, esp32Data);
-          
-          // Note: We don't need to manually update currentVitals here
-          // since we're subscribing to the database changes in another effect
           console.log('ESP32 data processed and saved to database');
         }
       } catch (error) {
