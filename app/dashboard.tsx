@@ -27,16 +27,22 @@ export default function Dashboard() {
   const { alerts, triggerEmergency } = useContext(AlertsContext);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Demo feature - simulate data readings
+  // Demo feature - simulate data readings - only for patients, not caretakers
   useEffect(() => {
+    // Skip simulation for caretakers
+    if (userProfile?.isCaretaker) return;
+    
     const interval = setInterval(() => {
       simulateReading().catch(console.error);
     }, 15000); // Every 15 seconds
 
     return () => clearInterval(interval);
-  }, []);
+  }, [userProfile]);
 
   const onRefresh = async () => {
+    // Skip refresh function for caretakers
+    if (userProfile?.isCaretaker) return;
+    
     setRefreshing(true);
     try {
       await simulateReading();

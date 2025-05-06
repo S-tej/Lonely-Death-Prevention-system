@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -7,11 +7,24 @@ import {
   TouchableOpacity, 
   TextInput, 
   Switch,
-  Alert 
+  Alert,
+  ActivityIndicator,
+  FlatList,
+  Modal
 } from 'react-native';
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { 
+  findCaretakerByPhone, 
+  findCaretakersByPartialPhone,
+  linkPatientToCaretaker, 
+  unlinkPatientFromCaretaker, 
+  getPatientCaretakers,
+  Caretaker
+} from '../services/caretakerService';
+import LogoutButton from '../components/LogoutButton';
+// import Fuse from 'fuse.js';
 
 type Contact = {
   id: string;
@@ -43,6 +56,37 @@ export default function CaretakersScreen() {
     phone: '',
     isCaretaker: true,
   });
+
+  // State for caretaker search
+  const [searchCaretakerPhone, setSearchCaretakerPhone] = useState('');
+  const [searchingCaretaker, setSearchingCaretaker] = useState(false);
+  const [foundCaretaker, setFoundCaretaker] = useState<{uid: string, name: string} | null>(null);
+  const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
+  const [loading, setLoading] = useState(false);
+  
+  // New state for search suggestions
+  const [caretakerSuggestions, setCaretakerSuggestions] = useState<Caretaker[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Load caretakers on component mount
+  useEffect(() => {
+    loadCaretakers();
+  }, [userProfile?.uid]);
+
+  const loadCaretakers = async () => {
+    if (!userProfile?.uid) return;
+    
+    setLoading(true);
+    try {
+      const caretakersList = await getPatientCaretakers(userProfile.uid);
+      setCaretakers(caretakersList);
+    } catch (error) {
+      console.error('Error loading caretakers:', error);
+      Alert.alert('Error', 'Failed to load caretakers');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAddContact = () => {
     if (!newContact.name || !newContact.phone) {
@@ -139,13 +183,182 @@ export default function CaretakersScreen() {
       });
   };
 
+  // Modified search handler that updates as the user types
+  const handleCaretakerPhoneChange = async (text: string) => {
+    setSearchCaretakerPhone(text);
+    
+    if (text.length >= 3) {
+      try {
+        setSearchingCaretaker(true);
+        const matches = await findCaretakersByPartialPhone(text);
+        setCaretakerSuggestions(matches);
+        setShowSuggestions(matches.length > 0);
+      } catch (error) {
+        console.error('Error searching caretakers:', error);
+      } finally {
+        setSearchingCaretaker(false);
+      }
+    } else {
+      setCaretakerSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+  
+  // Handler for selecting a suggested caretaker
+  const selectCaretaker = (caretaker: Caretaker) => {
+    setFoundCaretaker({
+      uid: caretaker.uid,
+      name: caretaker.displayName
+    });
+    setSearchCaretakerPhone(caretaker.phoneNumber);
+    setShowSuggestions(false);
+  };
+
+  const handleSearchCaretaker = async () => {
+    if (!searchCaretakerPhone) {
+      Alert.alert('Error', 'Please enter a phone number');
+      return;
+    }
+    
+    try {
+      setSearchingCaretaker(true);
+      // Check if we already have a match in suggestions
+      const existingMatch = caretakerSuggestions.find(c => c.phoneNumber === searchCaretakerPhone);
+      
+      if (existingMatch) {
+        // Use the existing match
+        setFoundCaretaker({
+          uid: existingMatch.uid,
+          name: existingMatch.displayName
+        });
+      } else {
+        // Fall back to regular search
+        const caretaker = await findCaretakerByPhone(searchCaretakerPhone);
+        
+        if (caretaker) {
+          setFoundCaretaker({
+            uid: caretaker.uid,
+            name: caretaker.displayName
+          });
+        } else {
+          Alert.alert('Not Found', 'No caretaker found with this phone number');
+          setFoundCaretaker(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error searching caretaker:', error);
+      Alert.alert('Error', 'Failed to search for caretaker');
+    } finally {
+      setSearchingCaretaker(false);
+      setShowSuggestions(false);
+    }
+  };
+
+  // Implement the missing addCaretaker function
+  const addCaretaker = async () => {
+    if (!foundCaretaker || !userProfile?.uid) return;
+    
+    try {
+      // Check if caretaker is already added
+      const isAlreadyAdded = caretakers.some(c => c.uid === foundCaretaker.uid);
+      
+      if (isAlreadyAdded) {
+        Alert.alert('Already Added', 'This caretaker is already linked to your account');
+        return;
+      }
+      
+      // Link the patient to the caretaker
+      await linkPatientToCaretaker(userProfile.uid, foundCaretaker.uid);
+      
+      // Reset form and reload caretakers
+      setSearchCaretakerPhone('');
+      setFoundCaretaker(null);
+      loadCaretakers();
+      
+      Alert.alert('Success', 'Caretaker added successfully');
+    } catch (error) {
+      console.error('Error adding caretaker:', error);
+      Alert.alert('Error', 'Failed to add caretaker');
+    }
+  };
+
   return (
     <>
-      <Stack.Screen options={{ title: "Caretakers & Emergency Contacts" }} />
-      <ScrollView style={styles.container}>
+      <Stack.Screen 
+        options={{ 
+          title: "Caretakers & Emergency Contacts",
+          headerRight: () => <LogoutButton color="white" />
+        }} 
+      />
+      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.description}>
           Add people who should be notified in case of emergency. Contacts marked as caretakers will receive regular health updates.
         </Text>
+        
+        {/* System Caretakers Section */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Health App Caretakers</Text>
+          <Text style={styles.sectionDescription}>
+            Add registered caretakers by their phone number to share your health data securely.
+          </Text>
+          
+          <View style={styles.searchContainer}>
+            <TextInput
+              style={styles.searchInput}
+              value={searchCaretakerPhone}
+              onChangeText={handleCaretakerPhoneChange}
+              placeholder="Enter caretaker's phone number"
+              keyboardType="phone-pad"
+            />
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={handleSearchCaretaker}
+              disabled={searchingCaretaker}
+            >
+              {searchingCaretaker ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Text style={styles.searchButtonText}>Search</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+          
+          {/* Caretaker suggestions dropdown */}
+          {showSuggestions && (
+            <View style={styles.suggestionsContainer}>
+              {caretakerSuggestions.map(caretaker => (
+                <TouchableOpacity
+                  key={caretaker.uid}
+                  style={styles.suggestionItem}
+                  onPress={() => selectCaretaker(caretaker)}
+                >
+                  <View>
+                    <Text style={styles.suggestionName}>{caretaker.displayName}</Text>
+                    <Text style={styles.suggestionPhone}>{caretaker.phoneNumber}</Text>
+                  </View>
+                  <Ionicons name="add-circle" size={24} color="#5C6BC0" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          
+          {foundCaretaker && (
+            <View style={styles.foundCaretakerContainer}>
+              <View style={styles.foundCaretakerInfo}>
+                <Text style={styles.foundCaretakerName}>{foundCaretaker.name}</Text>
+                <Text style={styles.foundCaretakerPhone}>Phone: {searchCaretakerPhone}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addCaretakerButton}
+                onPress={addCaretaker}
+              >
+                <Text style={styles.addCaretakerButtonText}>Add as Caretaker</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          
+          {/* ...existing caretaker list code... */}
+        </View>
         
         {!showAddForm ? (
           <TouchableOpacity 
@@ -425,5 +638,110 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 12,
     fontSize: 16,
+  },
+  suggestionsContainer: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginTop: 4,
+    maxHeight: 200,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  suggestionName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  suggestionPhone: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  // Add section container styles
+  sectionContainer: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#f9f9f9',
+    marginRight: 8,
+  },
+  searchButton: {
+    backgroundColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  searchButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  // Add foundCaretaker styles
+  foundCaretakerContainer: {
+    borderWidth: 1,
+    borderColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    backgroundColor: '#5C6BC020',
+  },
+  foundCaretakerInfo: {
+    marginBottom: 8,
+  },
+  foundCaretakerName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  foundCaretakerPhone: {
+    fontSize: 14,
+    color: '#666',
+  },
+  addCaretakerButton: {
+    backgroundColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 10,
+    alignItems: 'center',
+  },
+  addCaretakerButtonText: {
+    color: 'white',
+    fontWeight: '600',
   },
 });

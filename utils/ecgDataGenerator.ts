@@ -87,8 +87,11 @@ export const generateECGData = async (deviceId: string, sampleCount = 250, condi
     
     // Also save key metrics to vitals storage for this user
     if (deviceId.includes('user_')) {
+      // Extract the proper userId without the prefix
       const userId = deviceId.split('_')[1];
-      const vitalRef = ref(database, `vitals/${deviceId}/current`);
+      
+      // Use the correct path format
+      const vitalRef = ref(database, `vitals/${userId}/current`);
       await set(vitalRef, {
         timestamp: now,
         heartRate,

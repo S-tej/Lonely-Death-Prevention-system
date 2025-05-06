@@ -9,20 +9,28 @@
     },
     "vitals": {
       "$userId": {
-        ".indexOn": ["timestamp", "type"]
+        ".indexOn": ["timestamp", "type"],
+        ".read": true,
+        ".write": true
+      }
+    },
+    "ecg_data": {
+      "$deviceId": {
+        ".read": true,
+        ".write": true
       }
     },
     "profiles": {
-      ".read": "true",
-      ".write": "true"
+      ".read": true,
+      ".write": true
     },
     "users": {
-      ".read": "true",
-      ".write": "true"
+      ".read": true,
+      ".write": true
     },
     "passwordResets": {
-      ".read": "true",
-      ".write": "true",
+      ".read": true,
+      ".write": true,
       ".indexOn": ["expiration"]
     }
   }

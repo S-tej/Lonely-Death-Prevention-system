@@ -261,7 +261,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
         
-        <View style={styles.section}>
+        {/* <View style={styles.section}>
           <Text style={styles.sectionTitle}>Notifications</Text>
           
           <View style={styles.settingRow}>
@@ -328,7 +328,7 @@ export default function SettingsScreen() {
               thumbColor={notifications.soundOnAlert ? '#f05545' : '#f4f3f4'}
             />
           </View>
-        </View>
+        </View> */}
         
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>

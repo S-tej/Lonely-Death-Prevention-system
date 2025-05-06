@@ -54,6 +54,7 @@ type VitalsContextType = {
   historicalVitals: VitalSign[];
   lastUpdated: Date | null;
   loading: boolean;
+  isESP32Connected: boolean; // Add this property
   thresholds: AlertThresholds;
   updateThresholds: (newThresholds: Partial<AlertThresholds>) => Promise<void>;
   simulateReading: () => Promise<VitalSign | undefined>;
@@ -81,13 +82,14 @@ export const VitalsContext = createContext<VitalsContextType>({
   historicalVitals: [],
   lastUpdated: null,
   loading: true,
+  isESP32Connected: false, // Add this property
   thresholds: defaultThresholds,
   updateThresholds: async () => {},
   simulateReading: async () => undefined,
   checkAlertStatus: () => ({}),
 });
 
-export const VitalsProvider = ({ children }: { children: ReactNode }) => {
+export const VitalsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentVitals, setCurrentVitals] = useState<VitalSign | null>(null);
   const [historicalVitals, setHistoricalVitals] = useState<VitalSign[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -95,7 +97,7 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
   const [thresholds, setThresholds] = useState<AlertThresholds>(defaultThresholds);
   const [isESP32Connected, setIsESP32Connected] = useState(false);
   
-  const { user } = useContext(AuthContext);
+  const { user, userProfile } = useContext(AuthContext);
   const { triggerAlert } = useContext(AlertsContext);
   
   // Track when the last abnormality alert was triggered to prevent spam
@@ -163,64 +165,85 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // Function to generate simulated vital sign readings (for demo/testing)
-  const simulateReading = async (): Promise<VitalSign | null> => {
-    if (isESP32Connected) {
-      console.log('ESP32 connected, not simulating data');
-      return null; // Don't simulate data when ESP32 is connected
+  const simulateReading = async (): Promise<VitalSign | undefined> => {
+    // Don't simulate data for caretakers
+    if (!user || userProfile?.isCaretaker) {
+      return undefined;
     }
-    
-    // Original simulation code for when ESP32 is not connected
-    if (!user) return null;
-    console.log('Simulating vitals reading for demo purposes');
-    
-    const now = Date.now();
-    
-    // Generate ECG waveform data
-    const ecgPoints = [];
-    for (let i = 0; i < 50; i++) {
-      // Simplified ECG pattern generation
-      const baseValue = 0.8;
-      const peak = i % 10 === 5 ? 0.6 : 0;
-      ecgPoints.push(baseValue + peak + (Math.random() * 0.1));
-    }
-    
-    // Generate random heart rate in normal range
-    const heartRate = Math.floor(Math.random() * (90 - 60) + 60);
-    
-    // Generate ECG metrics (simplified)
-    const ecgMetrics = {
-      HRV_SDNN: parseFloat((Math.random() * 40 + 20).toFixed(2)), // 20-60ms
-      HRV_RMSSD: parseFloat((Math.random() * 30 + 15).toFixed(2)), // 15-45ms
-      RR_interval: Math.floor(60000 / heartRate), // Convert BPM to RR interval in ms
-      QRS_width: Math.floor(Math.random() * 20 + 80), // 80-100ms
-      PR_interval: Math.floor(Math.random() * 40 + 120), // 120-160ms
-      QT_interval: Math.floor(Math.random() * 50 + 350), // 350-400ms
-      ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)), // -0.2 to 0.2mV
-      signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2)) // 0.7-1.0
-    };
-    
-    const newVital: VitalSign = {
-      timestamp: now,
-      heartRate: heartRate,
-      bloodPressure: {
-        systolic: Math.floor(Math.random() * (140 - 110) + 110),
-        diastolic: Math.floor(Math.random() * (90 - 70) + 70)
-      },
-      oxygenSaturation: Math.floor(Math.random() * (100 - 94) + 94),
-      temperature: parseFloat((Math.random() * (37.2 - 36.5) + 36.5).toFixed(1)),
-      ecgData: ecgPoints,
-      ecgMetrics: ecgMetrics
-    };
 
+    // Check ESP32 connection and log status
+    const connected = await checkESP32Connection();
+    setIsESP32Connected(connected);
+    console.log(`ESP32 connection status: ${connected ? 'Connected' : 'Disconnected'}`);
+    
     try {
-      // Update current reading
-      await set(ref(database, `vitals/${user.uid}/current`), newVital);
+      console.log('Simulating vitals reading for patient');
       
-      // Add to history
-      const historyRef = ref(database, `vitals/${user.uid}/history`);
-      await push(historyRef, newVital);
+      // Generate random ECG pattern
+      const now = Date.now();
+      const ecgPoints = [];
       
-      return newVital; // Fixed: Return the newVital object
+      // Create 50 points of simulated ECG data
+      for (let i = 0; i < 50; i++) {
+        const baselineNoise = Math.random() * 0.1;
+        let value;
+        
+        // Simple ECG-like pattern simulation
+        const cycle = i % 10;
+        if (cycle === 5) {
+          value = 1 + baselineNoise; // R peak
+        } else if (cycle === 6) {
+          value = -0.2 + baselineNoise; // S wave
+        } else if (cycle === 8) {
+          value = 0.3 + baselineNoise; // T wave
+        } else {
+          value = 0 + baselineNoise; // Baseline
+        }
+        
+        ecgPoints.push(value);
+      }
+      
+      // Simulate heart rate with realistic values
+      const heartRate = Math.floor(Math.random() * (85 - 65) + 65);
+      
+      // ECG metrics
+      const ecgMetrics = {
+        HRV_SDNN: parseFloat((Math.random() * 40 + 20).toFixed(2)),
+        HRV_RMSSD: parseFloat((Math.random() * 30 + 15).toFixed(2)),
+        RR_interval: Math.floor(60000 / heartRate),
+        QRS_width: Math.floor(Math.random() * 20 + 80),
+        PR_interval: Math.floor(Math.random() * 40 + 120),
+        QT_interval: Math.floor(Math.random() * 50 + 350),
+        ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)),
+        signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2))
+      };
+      
+      const newVital: VitalSign = {
+        timestamp: now,
+        heartRate: heartRate,
+        bloodPressure: {
+          systolic: Math.floor(Math.random() * (140 - 110) + 110),
+          diastolic: Math.floor(Math.random() * (90 - 70) + 70)
+        },
+        oxygenSaturation: Math.floor(Math.random() * (100 - 94) + 94),
+        temperature: parseFloat((Math.random() * (37.2 - 36.5) + 36.5).toFixed(1)),
+        ecgData: ecgPoints,
+        ecgMetrics: ecgMetrics
+      };
+
+      try {
+        // Update current reading
+        await set(ref(database, `vitals/${user.uid}/current`), newVital);
+        
+        // Add to history
+        const historyRef = ref(database, `vitals/${user.uid}/history`);
+        await push(historyRef, newVital);
+        
+        return newVital;
+      } catch (error) {
+        console.error('Failed to write simulated reading:', error);
+        throw error;
+      }
     } catch (error) {
       console.error('Failed to simulate reading:', error);
       throw error;
@@ -260,6 +283,11 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
   // Replace simulated data with ESP32 data
   useEffect(() => {
     if (!user) return;
+    
+    // Skip ESP32 data fetching for caretakers
+    if (userProfile?.isCaretaker) {
+      return;
+    }
     
     let isMounted = true;
     let fetchInterval: NodeJS.Timeout;
@@ -320,7 +348,7 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
       clearInterval(fetchInterval);
       clearInterval(connectionCheckInterval);
     };
-  }, [user, isESP32Connected]); // Add isESP32Connected as a dependency
+  }, [user, userProfile, isESP32Connected]);
 
   // Add new useEffect to monitor vitals and trigger alerts for abnormalities
   useEffect(() => {
@@ -424,12 +452,58 @@ export const VitalsProvider = ({ children }: { children: ReactNode }) => {
     
   }, [currentVitals, thresholds, user, triggerAlert]);
 
+  // Add this useEffect for periodic simulation of vital signs
+  useEffect(() => {
+    if (!user || userProfile?.isCaretaker) return;
+    
+    let simulationInterval: NodeJS.Timeout;
+    
+    const checkConnectionAndSimulate = async () => {
+      const connected = await checkESP32Connection();
+      setIsESP32Connected(connected);
+      
+      // If ESP32 is disconnected, start simulation
+      if (!connected) {
+        console.log('ESP32 disconnected, starting automatic simulation');
+        
+        // Start periodic simulation only if not already running
+        if (!simulationInterval) {
+          simulationInterval = setInterval(async () => {
+            try {
+              await simulateReading();
+              console.log('Generated simulated vital signs');
+            } catch (error) {
+              console.error('Failed to simulate vitals:', error);
+            }
+          }, 10000); // Generate new values every 10 seconds
+        }
+      } else {
+        // If connected, stop simulation
+        if (simulationInterval) {
+          clearInterval(simulationInterval);
+          simulationInterval = undefined;
+          console.log('ESP32 connected, stopping simulation');
+        }
+      }
+    };
+    
+    // Check connection status initially and periodically
+    checkConnectionAndSimulate();
+    const connectionCheckInterval = setInterval(checkConnectionAndSimulate, 30000);
+    
+    return () => {
+      if (simulationInterval) clearInterval(simulationInterval);
+      clearInterval(connectionCheckInterval);
+    };
+  }, [user, userProfile]);
+
   return (
     <VitalsContext.Provider value={{
       currentVitals,
       historicalVitals,
       lastUpdated,
       loading,
+      isESP32Connected,
       thresholds,
       updateThresholds,
       simulateReading,

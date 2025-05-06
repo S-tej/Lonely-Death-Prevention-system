@@ -1,101 +1,51 @@
-import React, { useState, useEffect } from 'react';
+import React, { useContext } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { checkESP32Connection } from '../utils/esp32DataFetcher';
+import { VitalsContext } from '../context/VitalsContext';
 
-interface ESP32StatusProps {
-  compact?: boolean;
-}
-
-const ESP32Status: React.FC<ESP32StatusProps> = ({ compact = false }) => {
-  const [isConnected, setIsConnected] = useState<boolean | null>(null);
-  const [lastChecked, setLastChecked] = useState<Date>(new Date());
-
-  useEffect(() => {
-    let isMounted = true;
-    
-    const checkConnection = async () => {
-      const status = await checkESP32Connection();
-      if (isMounted) {
-        setIsConnected(status);
-        setLastChecked(new Date());
-      }
-    };
-    
-    // Check connection initially
-    checkConnection();
-    
-    // Set interval for periodic checks
-    const interval = setInterval(checkConnection, 15000); // Check every 15 seconds
-    
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, []);
-
-  if (isConnected === null) {
-    return (
-      <View style={compact ? styles.compactContainer : styles.container}>
-        <Ionicons name="ellipsis-horizontal" size={compact ? 16 : 24} color="#999" />
-        <Text style={compact ? styles.compactText : styles.text}>Checking ESP32...</Text>
-      </View>
-    );
-  }
-
+const ESP32Status = () => {
+  const { isESP32Connected } = useContext(VitalsContext);
+  
   return (
-    <View style={compact ? styles.compactContainer : styles.container}>
-      <Ionicons 
-        // name={isConnected ? "wifi" : "wifi-off"} 
-        size={compact ? 16 : 24} 
-        color={isConnected ? "#4CAF50" : "#FF5252"} 
-      />
-      <Text style={[
-        compact ? styles.compactText : styles.text, 
-        { color: isConnected ? "#4CAF50" : "#FF5252" }
-      ]}>
-        ESP32 {isConnected ? "Connected" : "Disconnected"}
+    <View style={styles.container}>
+      <View style={[
+        styles.statusIndicator, 
+        { backgroundColor: isESP32Connected ? '#4CAF50' : '#FFC107' }
+      ]} />
+      <Text style={styles.statusText}>
+        {isESP32Connected 
+          ? 'Real Data: ESP32 Connected' 
+          : 'Simulation Mode: ESP32 Disconnected'}
       </Text>
-      {!compact && (
-        <Text style={styles.timestamp}>
-          Last checked: {lastChecked.toLocaleTimeString()}
-        </Text>
-      )}
+      <Ionicons 
+        name={isESP32Connected ? "hardware-chip" : "pulse"} 
+        size={18} 
+        color={isESP32Connected ? "#4CAF50" : "#FFC107"} 
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  compactContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 16,
+    backgroundColor: 'white',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginBottom: 16,
   },
-  text: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: 4,
+  statusIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
   },
-  compactText: {
+  statusText: {
     fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
-  timestamp: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 4,
+    color: '#555',
+    marginRight: 8,
   }
 });
 

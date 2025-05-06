@@ -191,7 +191,7 @@ export default function EmergencyContactsScreen() {
                       const emergencyContacts = updatedContacts.map(c => ({
                         name: c.name,
                         relationship: c.relationship,
-                        phoneNumber: c.phone,
+                        phoneNumber: c.phone,   
                       }));
                       
                       updateUserProfile({ emergencyContacts })
