@@ -19,6 +19,7 @@ type Contact = {
   name: string;
   relationship: string;
   phone: string;
+  isCaretaker?: boolean; // Add isCaretaker property
 };
 
 export default function EmergencyContactsScreen() {
@@ -31,6 +32,7 @@ export default function EmergencyContactsScreen() {
         name: contact.name,
         relationship: contact.relationship,
         phone: contact.phoneNumber,
+        isCaretaker: contact.isCaretaker || false, // Add isCaretaker with default
       }))
     : [];
   
@@ -40,6 +42,7 @@ export default function EmergencyContactsScreen() {
     name: '',
     relationship: '',
     phone: '',
+    isCaretaker: false, // Default value
   });
 
   const handleAddContact = () => {
@@ -61,6 +64,7 @@ export default function EmergencyContactsScreen() {
       name: c.name,
       relationship: c.relationship,
       phoneNumber: c.phone,
+      isCaretaker: c.isCaretaker || false, // Include isCaretaker property
     }));
 
     updateUserProfile({ emergencyContacts })
@@ -74,6 +78,7 @@ export default function EmergencyContactsScreen() {
       name: '',
       relationship: '',
       phone: '',
+      isCaretaker: false, // Reset with default value
     });
     setShowAddForm(false);
   };
@@ -192,6 +197,7 @@ export default function EmergencyContactsScreen() {
                         name: c.name,
                         relationship: c.relationship,
                         phoneNumber: c.phone,   
+                        isCaretaker: c.isCaretaker || false, // Include isCaretaker property
                       }));
                       
                       updateUserProfile({ emergencyContacts })
@@ -218,6 +224,7 @@ export default function EmergencyContactsScreen() {
   );
 }
 
+// No changes needed to styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,

@@ -15,6 +15,8 @@ import {
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { ref, get } from 'firebase/database';
+import { database } from '../firebase/config';
 import { 
   findCaretakerByPhone, 
   findCaretakersByPartialPhone,
@@ -24,7 +26,6 @@ import {
   Caretaker
 } from '../services/caretakerService';
 import LogoutButton from '../components/LogoutButton';
-// import Fuse from 'fuse.js';
 
 type Contact = {
   id: string;
@@ -63,6 +64,7 @@ export default function CaretakersScreen() {
   const [foundCaretaker, setFoundCaretaker] = useState<{uid: string, name: string} | null>(null);
   const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
   const [loading, setLoading] = useState(false);
+  const [allCaretakers, setAllCaretakers] = useState<Caretaker[]>([]);
   
   // New state for search suggestions
   const [caretakerSuggestions, setCaretakerSuggestions] = useState<Caretaker[]>([]);
@@ -71,18 +73,57 @@ export default function CaretakersScreen() {
   // Load caretakers on component mount
   useEffect(() => {
     loadCaretakers();
+    loadAllCaretakers();
   }, [userProfile?.uid]);
 
+  const loadAllCaretakers = async () => {
+    setLoading(true);
+    try {
+      const profilesRef = ref(database, 'profiles');
+      const snapshot = await get(profilesRef);
+      
+      if (snapshot.exists()) {
+        const profiles = snapshot.val();
+        const caretakersList: Caretaker[] = [];
+        
+        // Filter for caretakers
+        Object.entries(profiles).forEach(([uid, profile]: [string, any]) => {
+          if (profile.isCaretaker === true) {
+            caretakersList.push({
+              uid,
+              displayName: profile.displayName || 'Unknown',
+              phoneNumber: profile.phoneNumber || '',
+              email: profile.email || '',
+              isCaretaker: true,
+              patients: profile.patients || []
+            });
+          }
+        });
+        
+        setAllCaretakers(caretakersList);
+      }
+    } catch (error) {
+      console.error('Error loading all caretakers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadCaretakers = async () => {
-    if (!userProfile?.uid) return;
+    if (!userProfile?.uid) {
+      console.log('Cannot load caretakers - no user profile ID');
+      return;
+    }
     
     setLoading(true);
     try {
+      console.log(`Loading caretakers for patient ${userProfile.uid}`);
       const caretakersList = await getPatientCaretakers(userProfile.uid);
+      console.log(`Found ${caretakersList.length} caretakers:`, caretakersList);
       setCaretakers(caretakersList);
     } catch (error) {
       console.error('Error loading caretakers:', error);
-      Alert.alert('Error', 'Failed to load caretakers');
+      Alert.alert('Error', `Failed to load caretakers: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -183,21 +224,16 @@ export default function CaretakersScreen() {
       });
   };
 
-  // Modified search handler that updates as the user types
+  // Modified search handler that uses the preloaded caretakers
   const handleCaretakerPhoneChange = async (text: string) => {
     setSearchCaretakerPhone(text);
     
-    if (text.length >= 3) {
-      try {
-        setSearchingCaretaker(true);
-        const matches = await findCaretakersByPartialPhone(text);
-        setCaretakerSuggestions(matches);
-        setShowSuggestions(matches.length > 0);
-      } catch (error) {
-        console.error('Error searching caretakers:', error);
-      } finally {
-        setSearchingCaretaker(false);
-      }
+    if (text.length >= 2) {
+      const matches = allCaretakers.filter(caretaker => 
+        caretaker.phoneNumber && caretaker.phoneNumber.includes(text)
+      );
+      setCaretakerSuggestions(matches);
+      setShowSuggestions(matches.length > 0);
     } else {
       setCaretakerSuggestions([]);
       setShowSuggestions(false);
@@ -254,11 +290,21 @@ export default function CaretakersScreen() {
     }
   };
 
-  // Implement the missing addCaretaker function
+  // Add caretaker function
   const addCaretaker = async () => {
-    if (!foundCaretaker || !userProfile?.uid) return;
+    if (!foundCaretaker || !userProfile?.uid) {
+      console.log('Missing required data:', { foundCaretaker, userProfileUid: userProfile?.uid });
+      Alert.alert('Error', 'Missing required information to add caretaker');
+      return;
+    }
     
     try {
+      console.log('Adding caretaker:', { 
+        patientId: userProfile.uid, 
+        caretakerId: foundCaretaker.uid, 
+        caretakerName: foundCaretaker.name 
+      });
+      
       // Check if caretaker is already added
       const isAlreadyAdded = caretakers.some(c => c.uid === foundCaretaker.uid);
       
@@ -268,18 +314,49 @@ export default function CaretakersScreen() {
       }
       
       // Link the patient to the caretaker
-      await linkPatientToCaretaker(userProfile.uid, foundCaretaker.uid);
+      const result = await linkPatientToCaretaker(userProfile.uid, foundCaretaker.uid);
+      console.log('Link result:', result);
       
       // Reset form and reload caretakers
       setSearchCaretakerPhone('');
       setFoundCaretaker(null);
-      loadCaretakers();
+      await loadCaretakers(); // Wait for this to complete
       
       Alert.alert('Success', 'Caretaker added successfully');
     } catch (error) {
       console.error('Error adding caretaker:', error);
-      Alert.alert('Error', 'Failed to add caretaker');
+      Alert.alert('Error', `Failed to add caretaker: ${error.message || 'Unknown error'}`);
     }
+  };
+
+  const removeCaretaker = async (caretakerId: string) => {
+    if (!userProfile?.uid) return;
+    
+    Alert.alert(
+      'Remove Caretaker',
+      'Are you sure you want to remove this caretaker? They will no longer have access to your health data.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Remove', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Unlink the patient from the caretaker
+              await unlinkPatientFromCaretaker(userProfile.uid, caretakerId);
+              
+              // Update local state
+              setCaretakers(caretakers.filter(c => c.uid !== caretakerId));
+              
+              Alert.alert('Success', 'Caretaker removed successfully');
+            } catch (error) {
+              console.error('Error removing caretaker:', error);
+              Alert.alert('Error', 'Failed to remove caretaker');
+            }
+          }
+        }
+      ]
+    );
   };
 
   return (
@@ -357,7 +434,31 @@ export default function CaretakersScreen() {
             </View>
           )}
           
-          {/* ...existing caretaker list code... */}
+          {/* Linked Caretakers List */}
+          <View style={styles.linkedCaretakersContainer}>
+            {caretakers.length > 0 ? (
+              caretakers.map(caretaker => (
+                <View key={caretaker.uid} style={styles.linkedCaretakerItem}>
+                  <View>
+                    <Text style={styles.linkedCaretakerName}>{caretaker.displayName}</Text>
+                    {caretaker.phoneNumber && (
+                      <Text style={styles.linkedCaretakerPhone}>{caretaker.phoneNumber}</Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    style={styles.removeCaretakerButton}
+                    onPress={() => removeCaretaker(caretaker.uid)}
+                  >
+                    <Ionicons name="close-circle" size={24} color="#FF5252" />
+                  </TouchableOpacity>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.noCaretakersText}>
+                No caretakers added yet. Search by phone number to add a caretaker.
+              </Text>
+            )}
+          </View>
         </View>
         
         {!showAddForm ? (
@@ -497,6 +598,147 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 20,
   },
+  sectionContainer: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#333',
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#f9f9f9',
+    marginRight: 8,
+  },
+  searchButton: {
+    backgroundColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  searchButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  suggestionsContainer: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginTop: 4,
+    maxHeight: 200,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  suggestionName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  suggestionPhone: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  foundCaretakerContainer: {
+    borderWidth: 1,
+    borderColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    backgroundColor: '#5C6BC020',
+  },
+  foundCaretakerInfo: {
+    marginBottom: 8,
+  },
+  foundCaretakerName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  foundCaretakerPhone: {
+    fontSize: 14,
+    color: '#666',
+  },
+  addCaretakerButton: {
+    backgroundColor: '#5C6BC0',
+    borderRadius: 8,
+    padding: 10,
+    alignItems: 'center',
+  },
+  addCaretakerButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  linkedCaretakersContainer: {
+    marginTop: 16,
+  },
+  linkedCaretakerItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  linkedCaretakerName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  linkedCaretakerPhone: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  removeCaretakerButton: {
+    padding: 4,
+  },
+  noCaretakersText: {
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 16,
+  },
   addButton: {
     backgroundColor: '#5C6BC0',
     borderRadius: 8,
@@ -575,12 +817,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#333',
-  },
   contactCard: {
     backgroundColor: 'white',
     borderRadius: 8,
@@ -638,110 +874,5 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 12,
     fontSize: 16,
-  },
-  suggestionsContainer: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginTop: 4,
-    maxHeight: 200,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  suggestionName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  suggestionPhone: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  // Add section container styles
-  sectionContainer: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  searchInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#f9f9f9',
-    marginRight: 8,
-  },
-  searchButton: {
-    backgroundColor: '#5C6BC0',
-    borderRadius: 8,
-    padding: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 80,
-  },
-  searchButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  // Add foundCaretaker styles
-  foundCaretakerContainer: {
-    borderWidth: 1,
-    borderColor: '#5C6BC0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    backgroundColor: '#5C6BC020',
-  },
-  foundCaretakerInfo: {
-    marginBottom: 8,
-  },
-  foundCaretakerName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  foundCaretakerPhone: {
-    fontSize: 14,
-    color: '#666',
-  },
-  addCaretakerButton: {
-    backgroundColor: '#5C6BC0',
-    borderRadius: 8,
-    padding: 10,
-    alignItems: 'center',
-  },
-  addCaretakerButtonText: {
-    color: 'white',
-    fontWeight: '600',
   },
 });

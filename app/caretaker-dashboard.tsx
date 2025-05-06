@@ -11,12 +11,12 @@ import {
 import { Stack, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
-// Fix the Firebase imports
 import { database } from '../firebase/config';
 import app from '../firebase/config';
 import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { ref, get } from 'firebase/database';
 import LogoutButton from '../components/LogoutButton';
+import { getCaretakerPatients } from '../services/caretakerService';
 
 // Define firestore constant after imports
 const firestore = getFirestore(app);
@@ -26,6 +26,16 @@ interface Patient {
   displayName: string;
   lastUpdate?: string;
   status?: 'normal' | 'warning' | 'critical';
+  vitals?: {
+    heartRate: number;
+    temperature: number;
+    oxygenSaturation: number;
+    bloodPressure?: {
+      systolic: number;
+      diastolic: number;
+    };
+    timestamp: number;
+  };
 }
 
 export default function CaretakerDashboardScreen() {
@@ -41,79 +51,62 @@ export default function CaretakerDashboardScreen() {
         setLoading(true);
         console.log("Loading patients for caretaker:", userProfile.displayName);
         
-        // Improved: use the userProfile.phoneNumber to find connections
-        if (!userProfile.phoneNumber) {
-          console.error('Caretaker has no phone number defined');
-          setLoading(false);
-          return;
-        }
-        
-        // Get all patients linked to this caretaker via profiles collection
-        const patientsData: Patient[] = [];
-        
-        const patientsQuery = query(
-          collection(firestore, 'patient_caretakers'),
-          where('caretakerId', '==', user.uid)
-        );
-        
-        const patientDocs = await getDocs(patientsQuery);
-        
-        if (patientDocs.empty) {
-          setPatients([]);
-          setLoading(false);
-          return;
-        }
-        
-        // Fetch full patient info for each link
-        for (const patientDoc of patientDocs.docs) {
-          const data = patientDoc.data();
-          const patientId = data.patientId;
-          
-          // Get patient profile from Firestore
-          const patientProfileRef = doc(firestore, 'users', patientId);
-          const patientProfileSnap = await getDoc(patientProfileRef);
-          
-          if (patientProfileSnap.exists()) {
-            const profile = patientProfileSnap.data();
-            
-            // Get latest vitals from Realtime Database
-            let status: 'normal' | 'warning' | 'critical' = 'normal';
-            let lastUpdate = 'N/A';
-            
-            try {
-              const vitalsRef = ref(database, `vitals/${patientId}/current`);
-              const vitalsSnap = await get(vitalsRef);
-              
-              if (vitalsSnap.exists()) {
-                const vitals = vitalsSnap.val();
-                lastUpdate = new Date(vitals.timestamp).toLocaleString();
-                
-                // Simple rule-based status evaluation
-                if (vitals.heartRate > 100 || vitals.heartRate < 60 || 
-                    vitals.oxygenSaturation < 92 || vitals.temperature > 37.8) {
-                  status = 'warning';
-                }
-                
-                if (vitals.heartRate > 120 || vitals.heartRate < 50 || 
-                    vitals.oxygenSaturation < 88 || vitals.temperature > 39) {
-                  status = 'critical';
-                }
-              }
-            } catch (error) {
-              console.error('Error fetching vitals data:', error);
-            }
-            
-            patientsData.push({
-              id: patientId,
-              displayName: profile.displayName || 'Patient',
-              lastUpdate,
-              status
-            });
-          }
-        }
-        
+        // Use the service function to get patient data
+        const patientsData = await getCaretakerPatients(user.uid);
         console.log(`Found ${patientsData.length} patients for caretaker`);
-        setPatients(patientsData);
+        
+        // Process each patient to get their vitals
+        const processedPatients: Patient[] = [];
+        
+        for (const patientData of patientsData) {
+          const patientId = patientData.id;
+          
+          // Get latest vitals from Realtime Database
+          let status: 'normal' | 'warning' | 'critical' = 'normal';
+          let lastUpdate = 'N/A';
+          let vitals = null;
+          
+          try {
+            const vitalsRef = ref(database, `vitals/${patientId}/current`);
+            const vitalsSnap = await get(vitalsRef);
+            
+            if (vitalsSnap.exists()) {
+              const vitalsData = vitalsSnap.val();
+              vitals = {
+                heartRate: vitalsData.heartRate,
+                temperature: vitalsData.temperature,
+                oxygenSaturation: vitalsData.oxygenSaturation,
+                bloodPressure: vitalsData.bloodPressure,
+                timestamp: vitalsData.timestamp
+              };
+              
+              lastUpdate = new Date(vitalsData.timestamp).toLocaleString();
+              
+              // Simple rule-based status evaluation
+              if (vitalsData.heartRate > 100 || vitalsData.heartRate < 60 || 
+                  vitalsData.oxygenSaturation < 92 || vitalsData.temperature > 37.8) {
+                status = 'warning';
+              }
+              
+              if (vitalsData.heartRate > 120 || vitalsData.heartRate < 50 || 
+                  vitalsData.oxygenSaturation < 88 || vitalsData.temperature > 39) {
+                status = 'critical';
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching vitals for patient ${patientId}:`, error);
+          }
+          
+          processedPatients.push({
+            id: patientId,
+            displayName: patientData.displayName || 'Patient',
+            lastUpdate,
+            status,
+            vitals
+          });
+        }
+        
+        setPatients(processedPatients);
       } catch (error) {
         console.error('Error loading patients:', error);
         Alert.alert('Error', 'Failed to load patients');
@@ -148,6 +141,14 @@ export default function CaretakerDashboardScreen() {
     );
   };
 
+  // Function to navigate to patient dashboard
+  const navigateToPatientDashboard = (patientId: string) => {
+    router.push({
+      pathname: './caretaker-patient-dashboard',
+      params: { patientId }
+    });
+  };
+
   return (
     <>
       <Stack.Screen 
@@ -179,14 +180,24 @@ export default function CaretakerDashboardScreen() {
             renderItem={({ item }) => (
               <TouchableOpacity 
                 style={styles.patientCard}
-                onPress={() => router.push({
-                  pathname: './patient-reports',
-                  params: { patientId: item.id }
-                })}
+                onPress={() => navigateToPatientDashboard(item.id)}
               >
                 <View style={styles.patientInfo}>
                   <Text style={styles.patientName}>{item.displayName}</Text>
                   <Text style={styles.lastUpdated}>Last updated: {item.lastUpdate}</Text>
+                  
+                  {item.vitals && (
+                    <View style={styles.vitalsPreview}>
+                      <View style={styles.vitalItem}>
+                        <Ionicons name="heart" size={12} color="#FF5252" />
+                        <Text style={styles.vitalText}>{item.vitals.heartRate || '--'} BPM</Text>
+                      </View>
+                      <View style={styles.vitalItem}>
+                        <Ionicons name="thermometer" size={12} color="#FFA726" />
+                        <Text style={styles.vitalText}>{item.vitals.temperature ? item.vitals.temperature.toFixed(1) : '--'}°C</Text>
+                      </View>
+                    </View>
+                  )}
                 </View>
                 <View style={styles.statusContainer}>
                   <View style={[
@@ -227,17 +238,6 @@ export default function CaretakerDashboardScreen() {
             </Text>
           </View>
         )}
-        
-        {/* Logout Button at Bottom */}
-        <View style={styles.logoutButtonContainer}>
-          <TouchableOpacity 
-            style={styles.logoutButton}
-            onPress={handleLogout}
-          >
-            <Ionicons name="log-out-outline" size={20} color="white" />
-            <Text style={styles.logoutButtonText}>Log Out</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </>
   );
@@ -247,9 +247,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-    padding: 16,
   },
   headerContainer: {
+    padding: 16,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
     marginBottom: 24,
   },
   welcomeText: {
@@ -275,6 +278,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
+    marginHorizontal: 16,
     marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -296,6 +300,20 @@ const styles = StyleSheet.create({
   lastUpdated: {
     fontSize: 12,
     color: '#999',
+  },
+  vitalsPreview: {
+    flexDirection: 'row',
+    marginTop: 8,
+  },
+  vitalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  vitalText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
   },
   statusContainer: {
     flexDirection: 'row',
@@ -348,25 +366,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     paddingHorizontal: 32,
-  },
-  logoutButtonContainer: {
-    marginTop: 'auto',
-    paddingVertical: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  logoutButton: {
-    backgroundColor: '#f05545',
-    borderRadius: 8,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoutButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 8,
-    fontSize: 16,
-  },
+  }
 });

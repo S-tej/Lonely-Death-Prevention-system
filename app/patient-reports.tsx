@@ -262,6 +262,18 @@ export default function PatientReportsScreen() {
                   <Text style={styles.vitalLabel}>BP</Text>
                 </View>
               </View>
+              <TouchableOpacity 
+                style={styles.dashboardButton}
+                onPress={() => router.push({
+                  pathname: './caretaker-patient-dashboard',
+                  params: { patientId: patientId as string }
+                })}
+              >
+                <Ionicons name="pulse" size={18} color="white" />
+                <Text style={styles.dashboardButtonText}>
+                  View Live Dashboard
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
           
@@ -476,5 +488,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#999',
     padding: 24,
+  },
+  dashboardButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#5C6BC0',
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  dashboardButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
 });
