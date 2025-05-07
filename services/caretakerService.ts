@@ -356,3 +356,38 @@ export const getCaretakerPatients = async (caretakerId: string) => {
     throw error;
   }
 };
+
+/**
+ * Get count of caretakers linked to a patient (for diagnostics)
+ * @param patientId - The patient's user ID
+ */
+export const getPatientCaretakerCount = async (patientId: string): Promise<number> => {
+  try {
+    // First check Firestore links
+    const linksQuery = query(
+      collection(firestore, 'patient_caretakers'),
+      where('patientId', '==', patientId)
+    );
+    
+    const linkDocs = await getDocs(linksQuery);
+    if (!linkDocs.empty) {
+      return linkDocs.size;
+    }
+    
+    // Fallback to RTDB
+    const rtdbRef = ref(database, `profiles/${patientId}/caretakers`);
+    const rtdbSnapshot = await get(rtdbRef);
+    
+    if (rtdbSnapshot.exists()) {
+      const caretakers = rtdbSnapshot.val();
+      if (Array.isArray(caretakers)) {
+        return caretakers.length;
+      }
+    }
+    
+    return 0;
+  } catch (error) {
+    console.error('Error getting patient caretaker count:', error);
+    return 0;
+  }
+};

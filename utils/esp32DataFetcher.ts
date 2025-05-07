@@ -3,7 +3,7 @@ import { getDatabase } from 'firebase/database';
 import { database } from '../firebase/config';
 import { mapESP32DataToMLParams, getPrediction } from './mlPredictionService';
 
-const ESP_IP = 'http://192.168.18.99';  // Your ESP32 IP address
+const ESP_IP = 'http://192.168.254.99';  // Your ESP32 IP address
 
 // Interface for the data received from ESP32
 export interface ESP32Data {
@@ -22,6 +22,7 @@ export interface ESP32Data {
   signalquality: number;    // Signal quality
   stdeviation: number;      // ST deviation
   systolic: number;         // Systolic blood pressure
+  ecgHistory?: number[];    // ECG history data array
 }
 
 /**
@@ -86,6 +87,7 @@ export const updateDatabaseWithESP32Data = async (userId: string, data: ESP32Dat
       },
       oxygenSaturation: data.SpO2 || 0,
       temperature: data.bodytempc || 0,
+      ecgData: data.ecgHistory || [], // Use ecgHistory array from ESP32 data
       ecgMetrics: {
         HRV_SDNN: data.hrvsdn || 0,
         HRV_RMSSD: data.hrvrmssd || 0,

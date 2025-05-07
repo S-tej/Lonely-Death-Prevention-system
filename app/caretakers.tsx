@@ -322,7 +322,7 @@ export default function CaretakersScreen() {
       setFoundCaretaker(null);
       await loadCaretakers(); // Wait for this to complete
       
-      Alert.alert('Success', 'Caretaker added successfully');
+      Alert.alert('Success', 'Caretaker added successfully. They will now receive emergency alerts and can monitor your health data.');
     } catch (error) {
       console.error('Error adding caretaker:', error);
       Alert.alert('Error', `Failed to add caretaker: ${error.message || 'Unknown error'}`);
@@ -369,7 +369,7 @@ export default function CaretakersScreen() {
       />
       <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.description}>
-          Add people who should be notified in case of emergency. Contacts marked as caretakers will receive regular health updates.
+          Add people who should be notified in case of emergency. Contacts marked as caretakers will receive regular health updates and emergency alerts.
         </Text>
         
         {/* System Caretakers Section */}

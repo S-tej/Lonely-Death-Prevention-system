@@ -174,78 +174,78 @@ export const VitalsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     // Check ESP32 connection and log status
     const connected = await checkESP32Connection();
     setIsESP32Connected(connected);
-    console.log(`ESP32 connection status: ${connected ? 'Connected' : 'Disconnected'}`);
     
-    try {
-      console.log('Simulating vitals reading for patient');
-      
-      // Generate random ECG pattern
-      const now = Date.now();
-      const ecgPoints = [];
-      
-      // Create 50 points of simulated ECG data
-      for (let i = 0; i < 50; i++) {
-        const baselineNoise = Math.random() * 0.1;
-        let value;
-        
-        // Simple ECG-like pattern simulation
-        const cycle = i % 10;
-        if (cycle === 5) {
-          value = 1 + baselineNoise; // R peak
-        } else if (cycle === 6) {
-          value = -0.2 + baselineNoise; // S wave
-        } else if (cycle === 8) {
-          value = 0.3 + baselineNoise; // T wave
-        } else {
-          value = 0 + baselineNoise; // Baseline
-        }
-        
-        ecgPoints.push(value);
-      }
-      
-      // Simulate heart rate with realistic values
-      const heartRate = Math.floor(Math.random() * (85 - 65) + 65);
-      
-      // ECG metrics
-      const ecgMetrics = {
-        HRV_SDNN: parseFloat((Math.random() * 40 + 20).toFixed(2)),
-        HRV_RMSSD: parseFloat((Math.random() * 30 + 15).toFixed(2)),
-        RR_interval: Math.floor(60000 / heartRate),
-        QRS_width: Math.floor(Math.random() * 20 + 80),
-        PR_interval: Math.floor(Math.random() * 40 + 120),
-        QT_interval: Math.floor(Math.random() * 50 + 350),
-        ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)),
-        signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2))
-      };
-      
-      const newVital: VitalSign = {
-        timestamp: now,
-        heartRate: heartRate,
-        bloodPressure: {
-          systolic: Math.floor(Math.random() * (140 - 110) + 110),
-          diastolic: Math.floor(Math.random() * (90 - 70) + 70)
-        },
-        oxygenSaturation: Math.floor(Math.random() * (100 - 94) + 94),
-        temperature: parseFloat((Math.random() * (37.2 - 36.5) + 36.5).toFixed(1)),
-        ecgData: ecgPoints,
-        ecgMetrics: ecgMetrics
-      };
+    // If ESP32 is connected, don't generate simulated data
+    if (connected) {
+      console.log("ESP32 is connected. Skipping simulation to use real data.");
+      return undefined;
+    }
 
-      try {
-        // Update current reading
-        await set(ref(database, `vitals/${user.uid}/current`), newVital);
-        
-        // Add to history
-        const historyRef = ref(database, `vitals/${user.uid}/history`);
-        await push(historyRef, newVital);
-        
-        return newVital;
-      } catch (error) {
-        console.error('Failed to write simulated reading:', error);
-        throw error;
+    console.log('Simulating vitals reading for patient');
+    
+    // Generate random ECG pattern
+    const now = Date.now();
+    const ecgPoints = [];
+    
+    // Create 50 points of simulated ECG data
+    for (let i = 0; i < 50; i++) {
+      const baselineNoise = Math.random() * 0.1;
+      let value;
+      
+      // Simple ECG-like pattern simulation
+      const cycle = i % 10;
+      if (cycle === 5) {
+        value = 1 + baselineNoise; // R peak
+      } else if (cycle === 6) {
+        value = -0.2 + baselineNoise; // S wave
+      } else if (cycle === 8) {
+        value = 0.3 + baselineNoise; // T wave
+      } else {
+        value = 0 + baselineNoise; // Baseline
       }
+      
+      ecgPoints.push(value);
+    }
+    
+    // Simulate heart rate with realistic values
+    const heartRate = Math.floor(Math.random() * (85 - 65) + 65);
+    
+    // ECG metrics
+    const ecgMetrics = {
+      HRV_SDNN: parseFloat((Math.random() * 40 + 20).toFixed(2)),
+      HRV_RMSSD: parseFloat((Math.random() * 30 + 15).toFixed(2)),
+      RR_interval: Math.floor(60000 / heartRate),
+      QRS_width: Math.floor(Math.random() * 20 + 80),
+      PR_interval: Math.floor(Math.random() * 40 + 120),
+      QT_interval: Math.floor(Math.random() * 50 + 350),
+      ST_deviation: parseFloat(((Math.random() * 0.4) - 0.2).toFixed(2)),
+      signal_quality: parseFloat((Math.random() * 0.3 + 0.7).toFixed(2))
+    };
+    
+    const newVital: VitalSign = {
+      timestamp: now,
+      heartRate: heartRate,
+      bloodPressure: {
+        systolic: Math.floor(Math.random() * (140 - 110) + 110),
+        diastolic: Math.floor(Math.random() * (90 - 70) + 70)
+      },
+      oxygenSaturation: Math.floor(Math.random() * (100 - 94) + 94),
+      temperature: parseFloat((Math.random() * (37.2 - 36.5) + 36.5).toFixed(1)),
+      ecgData: ecgPoints,
+      ecgMetrics: ecgMetrics
+    };
+
+    try {
+      // Update current reading
+      await set(ref(database, `vitals/${user.uid}/current`), newVital);
+      
+      // Add to history
+      const historyRef = ref(database, `vitals/${user.uid}/history`);
+      await push(historyRef, newVital);
+      
+      return newVital;
     } catch (error) {
-      console.error('Failed to simulate reading:', error);
+      console.error('Failed to write simulated reading:', error);
       throw error;
     }
   };
@@ -320,12 +320,7 @@ export const VitalsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         // Fetch data from ESP32
         const esp32Data = await fetchESP32Data();
         
-        // Don't update if all values are zero - might be a connection issue
-        if (isAllZeros(esp32Data)) {
-          console.log('Received all zeros from ESP32, likely a connection issue');
-          return;
-        }
-        
+        // When ESP32 is connected, always use the data regardless of zeros
         // Update database with ESP32 data
         if (user?.uid) {
           await updateDatabaseWithESP32Data(user.uid, esp32Data);

@@ -143,39 +143,39 @@ const ECGMonitor: React.FC<ECGMonitorProps> = ({ sampleCount = 100 }) => {
     };
   }, [user, sampleCount]);
 
-  // Very simplified heart rate estimation (fallback if not provided in data)
-  const estimateHeartRate = (ecgValues: number[], samplingRate: number): number | null => {
-    try {
-      // Find peaks (very simplified - would need better algorithm in production)
-      const threshold = Math.max(...ecgValues) * 0.6;
-      let peakCount = 0;
-      let isPeak = false;
+  // // Very simplified heart rate estimation (fallback if not provided in data)
+  // const estimateHeartRate = (ecgValues: number[], samplingRate: number): number | null => {
+  //   try {
+  //     // Find peaks (very simplified - would need better algorithm in production)
+  //     const threshold = Math.max(...ecgValues) * 0.6;
+  //     let peakCount = 0;
+  //     let isPeak = false;
       
-      for (let i = 1; i < ecgValues.length - 1; i++) {
-        if (!isPeak && ecgValues[i] > threshold && ecgValues[i] > ecgValues[i-1] && ecgValues[i] > ecgValues[i+1]) {
-          peakCount++;
-          isPeak = true;
-        } else if (isPeak && ecgValues[i] < threshold) {
-          isPeak = false;
-        }
-      }
+  //     for (let i = 1; i < ecgValues.length - 1; i++) {
+  //       if (!isPeak && ecgValues[i] > threshold && ecgValues[i] > ecgValues[i-1] && ecgValues[i] > ecgValues[i+1]) {
+  //         peakCount++;
+  //         isPeak = true;
+  //       } else if (isPeak && ecgValues[i] < threshold) {
+  //         isPeak = false;
+  //       }
+  //     }
       
-      if (peakCount < 2) return null;
+  //     if (peakCount < 2) return null;
       
-      // Calculate heart rate: (peaks / time period in seconds) * 60
-      const timePeriodInSeconds = ecgValues.length / samplingRate;
-      const heartRate = Math.round((peakCount / timePeriodInSeconds) * 60);
+  //     // Calculate heart rate: (peaks / time period in seconds) * 60
+  //     const timePeriodInSeconds = ecgValues.length / samplingRate;
+  //     const heartRate = Math.round((peakCount / timePeriodInSeconds) * 60);
       
-      // Sanity check - typical heart rates are between 40-200 BPM
-      if (heartRate >= 40 && heartRate <= 200) {
-        return heartRate;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error estimating heart rate:', error);
-      return null;
-    }
-  };
+  //     // Sanity check - typical heart rates are between 40-200 BPM
+  //     if (heartRate >= 40 && heartRate <= 200) {
+  //       return heartRate;
+  //     }
+  //     return null;
+  //   } catch (error) {
+  //     console.error('Error estimating heart rate:', error);
+  //     return null;
+  //   }
+  // };
 
   // Function to get signal quality indicator
   const getSignalQualityIndicator = (quality: number | undefined) => {

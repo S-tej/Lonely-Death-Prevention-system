@@ -4,6 +4,7 @@ import { database } from '../firebase/config';
 import { AuthContext } from './AuthContext';
 import { makeEmergencyCall, sendEmergencySMS } from '../utils/twilioService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getPatientCaretakerCount, getPatientCaretakers } from '../services/caretakerService';
 
 export type Alert = {
   id?: string;
@@ -106,9 +107,16 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
     if (!user) return;
     
     const now = Date.now();
+    // Convert to IST for logging (UTC+5:30)
+    const istTime = new Date(now).toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'short',
+      timeStyle: 'medium'
+    });
+    
     const newAlert = {
       ...alert,
-      timestamp: now,
+      timestamp: now, // Keep UTC timestamp for database
       acknowledged: false
     };
     
@@ -119,9 +127,10 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
       await set(newAlertRef, newAlert);
       
       // Only make calls for emergency or critical alerts
+      const alertKey = `${alert.type}_${alert.vitalSign || 'general'}`;
+      
       if ((alert.type === 'emergency' || alert.type === 'critical') && autoCallsEnabled) {
         // Check if we made a call recently (within 15 minutes) to prevent spam
-        const alertKey = `${alert.type}_${alert.vitalSign || 'general'}`;
         const lastCallTime = lastEmergencyCallTime[alertKey] || 0;
         const fifteenMinutes = 15 * 60 * 1000;
         
@@ -129,9 +138,37 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
           // Get emergency contacts
           const emergencyContacts = userProfile?.emergencyContacts || [];
           
-          if (emergencyContacts.length > 0) {
-            for (const contact of emergencyContacts) {
+          // Get caretakers
+          let caretakers: { displayName: string; phoneNumber: string }[] = [];
+          try {
+            if (user.uid) {
+              console.log(`[${istTime}] Loading caretakers for patient ${user.uid} for emergency notification`);
+              const patientCaretakers = await getPatientCaretakers(user.uid);
+              caretakers = patientCaretakers.filter(c => c.phoneNumber);
+              console.log(`[${istTime}] Found ${caretakers.length} caretakers for emergency notification:`, caretakers);
+            }
+          } catch (error) {
+            console.error(`[${istTime}] Failed to load caretakers for emergency notification:`, error);
+          }
+          
+          // Combine contacts to notify (emergency contacts + caretakers)
+          const allContactsToNotify = [
+            ...emergencyContacts.filter(contact => contact.phoneNumber),
+            ...caretakers.map(c => ({
+              name: c.displayName || 'Caretaker',
+              phoneNumber: c.phoneNumber,
+              isCaretaker: true
+            }))
+          ];
+          
+          console.log(`[${istTime}] Notifying ${allContactsToNotify.length} contacts for emergency alert:`, 
+            allContactsToNotify.map(c => ({ name: c.name, phone: c.phoneNumber })));
+          
+          if (allContactsToNotify.length > 0) {
+            for (const contact of allContactsToNotify) {
               if (contact.phoneNumber) {
+                console.log(`[${istTime}] Sending notification to ${contact.name || 'Contact'} at ${contact.phoneNumber}`);
+                
                 // First send an SMS
                 await sendEmergencySMS({
                   to: contact.phoneNumber,
@@ -140,7 +177,8 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
                 });
                 
                 // For emergency level alerts or manually triggered alerts, make a call
-                if (alert.type === 'emergency') {
+                // Always call caretakers for emergencies
+                if (alert.type === 'emergency' || contact.isCaretaker) {
                   await makeEmergencyCall({
                     to: contact.phoneNumber,
                     message: alert.message,
@@ -155,9 +193,29 @@ export const AlertsProvider = ({ children }: { children: ReactNode }) => {
               ...prev,
               [alertKey]: now
             }));
+          } else {
+            console.log(`[${istTime}] No contacts to notify for emergency alert`);
           }
         }
       }
+      
+      // Convert last call time to IST for logging
+      const lastCallTimeIST = lastEmergencyCallTime[alertKey] ? 
+        new Date(lastEmergencyCallTime[alertKey]).toLocaleString('en-IN', { 
+          timeZone: 'Asia/Kolkata', 
+          dateStyle: 'short',
+          timeStyle: 'medium'
+        }) : 'never';
+      
+      // Debugging code
+      console.log(`[${istTime}] Emergency alert triggered:`, {
+        type: alert.type,
+        autoCallsEnabled,
+        hasContacts: (userProfile?.emergencyContacts || []).length > 0,
+        hasCaretakers: await getPatientCaretakerCount(user.uid),
+        lastCallTime: lastCallTimeIST,
+        timeSinceLastCall: now - (lastEmergencyCallTime[alertKey] || 0)
+      });
       
       return {
         ...newAlert,
