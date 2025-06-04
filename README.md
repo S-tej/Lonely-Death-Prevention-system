@@ -31,8 +31,7 @@ LDPS is a comprehensive health monitoring system that connects patients with car
 LDPS connects to ESP32-based health monitors to track vital signs including:
 - ❤️ Heart rate and ECG
 - 🩸 Blood pressure
-- 🌡️ Body temperature![IMG_6800 copy](https://github.com/user-attachments/assets/db952c89-fb2a-4f94-8966-bf3aa7445f4d)
-
+- 🌡️ Body temperature
 - 💧 Oxygen saturation
 
 When critical health events are detected, the system automatically alerts caretakers and emergency contacts through calls and SMS.
