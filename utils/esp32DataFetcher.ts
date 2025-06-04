@@ -2,8 +2,10 @@ import { ref, set, push } from 'firebase/database';
 import { getDatabase } from 'firebase/database';
 import { database } from '../firebase/config';
 import { mapESP32DataToMLParams, getPrediction } from './mlPredictionService';
+import ENV from '../config/env';
 
-const ESP_IP = 'http://192.168.254.99';  // Your ESP32 IP address
+// Get ESP_IP from environment variables
+const ESP_IP = ENV.ESP_IP;  // Previously hardcoded as 'http://192.168.254.99'
 
 // Interface for the data received from ESP32
 export interface ESP32Data {

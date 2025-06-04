@@ -1,11 +1,12 @@
 import { Alert } from 'react-native';
 import { encode as btoa } from 'base-64'; // For base64 encoding
+import ENV from '../config/env';
 
-// Twilio credentials - Replace environment variables with actual values
-const TWILIO_ACCOUNT_SID = 'AC3d2f7fe69668c38ac6b67d552ef71123';
-const TWILIO_AUTH_TOKEN = '9df89fc8f8ef08bcaf5cebecfba33082';
-const TWILIO_FLOW_SID = 'FWb50730bc4103bf65e53cf0aed74ff35e';
-const TWILIO_PHONE_NUMBER = '+18382850071';
+// Get Twilio credentials from environment variables
+const TWILIO_ACCOUNT_SID = ENV.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = ENV.TWILIO_AUTH_TOKEN;
+const TWILIO_FLOW_SID = ENV.TWILIO_FLOW_SID;
+const TWILIO_PHONE_NUMBER = ENV.TWILIO_PHONE_NUMBER;
 
 interface CallParams {
   to: string;
